@@ -16,7 +16,7 @@ _CN.transformer = 'latentcostformer'
 
 _CN.model = None 
 
-_CN.restore_ckpt = "checkpoints/sintel.pth"
+_CN.restore_ckpt = "checkpoints/kitti.pth"
 
 # latentcostformer
 _CN.latentcostformer = CN()

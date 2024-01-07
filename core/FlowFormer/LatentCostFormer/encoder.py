@@ -9,8 +9,9 @@ import numpy as np
 from einops.layers.torch import Rearrange
 from einops import rearrange
 
-from utils.utils import coords_grid, bilinear_sampler, upflow8
-from .attention import BroadMultiHeadAttention, MultiHeadAttention, LinearPositionEmbeddingSine, ExpPositionEmbeddingSine
+from core.utils.utils import coords_grid, bilinear_sampler, upflow8
+from .attention import BroadMultiHeadAttention, MultiHeadAttention, LinearPositionEmbeddingSine, \
+    ExpPositionEmbeddingSine
 from ..encoders import twins_svt_large
 from typing import Optional, Tuple
 from .twins import Size_, PosConv
@@ -20,6 +21,7 @@ from .convnext import ConvNextLayer
 import time
 
 from timm.models.layers import Mlp, DropPath, activations, to_2tuple, trunc_normal_
+
 
 class PatchEmbed(nn.Module):
     def __init__(self, patch_size=16, in_chans=1, embed_dim=64, pe='linear'):
@@ -31,30 +33,30 @@ class PatchEmbed(nn.Module):
         # assert patch_size == 8
         if patch_size == 8:
             self.proj = nn.Sequential(
-                nn.Conv2d(in_chans, embed_dim//4, kernel_size=6, stride=2, padding=2),
+                nn.Conv2d(in_chans, embed_dim // 4, kernel_size=6, stride=2, padding=2),
                 nn.ReLU(),
-                nn.Conv2d(embed_dim//4, embed_dim//2, kernel_size=6, stride=2, padding=2),
+                nn.Conv2d(embed_dim // 4, embed_dim // 2, kernel_size=6, stride=2, padding=2),
                 nn.ReLU(),
-                nn.Conv2d(embed_dim//2, embed_dim, kernel_size=6, stride=2, padding=2),
+                nn.Conv2d(embed_dim // 2, embed_dim, kernel_size=6, stride=2, padding=2),
             )
         elif patch_size == 4:
             self.proj = nn.Sequential(
-                nn.Conv2d(in_chans, embed_dim//4, kernel_size=6, stride=2, padding=2),
+                nn.Conv2d(in_chans, embed_dim // 4, kernel_size=6, stride=2, padding=2),
                 nn.ReLU(),
-                nn.Conv2d(embed_dim//4, embed_dim, kernel_size=6, stride=2, padding=2),
+                nn.Conv2d(embed_dim // 4, embed_dim, kernel_size=6, stride=2, padding=2),
             )
         else:
             print(f"patch size = {patch_size} is unacceptable.")
 
         self.ffn_with_coord = nn.Sequential(
-            nn.Conv2d(embed_dim*2, embed_dim*2, kernel_size=1),
+            nn.Conv2d(embed_dim * 2, embed_dim * 2, kernel_size=1),
             nn.ReLU(),
-            nn.Conv2d(embed_dim*2, embed_dim*2, kernel_size=1)
+            nn.Conv2d(embed_dim * 2, embed_dim * 2, kernel_size=1)
         )
-        self.norm = nn.LayerNorm(embed_dim*2)
+        self.norm = nn.LayerNorm(embed_dim * 2)
 
     def forward(self, x) -> Tuple[torch.Tensor, Size_]:
-        B, C, H, W = x.shape    # C == 1
+        B, C, H, W = x.shape  # C == 1
 
         pad_l = pad_t = 0
         pad_r = (self.patch_size - W % self.patch_size) % self.patch_size
@@ -62,9 +64,10 @@ class PatchEmbed(nn.Module):
         x = F.pad(x, (pad_l, pad_r, pad_t, pad_b))
 
         x = self.proj(x)
-        out_size = x.shape[2:] 
+        out_size = x.shape[2:]
 
-        patch_coord = coords_grid(B, out_size[0], out_size[1]).to(x.device) * self.patch_size + self.patch_size/2 # in feature coordinate space
+        patch_coord = coords_grid(B, out_size[0], out_size[1]).to(
+            x.device) * self.patch_size + self.patch_size / 2  # in feature coordinate space
         patch_coord = patch_coord.view(B, 2, -1).permute(0, 2, 1)
         if self.pe == 'linear':
             patch_coord_enc = LinearPositionEmbeddingSine(patch_coord, dim=self.dim)
@@ -73,12 +76,14 @@ class PatchEmbed(nn.Module):
         patch_coord_enc = patch_coord_enc.permute(0, 2, 1).view(B, -1, out_size[0], out_size[1])
 
         x_pe = torch.cat([x, patch_coord_enc], dim=1)
-        x =  self.ffn_with_coord(x_pe)
+        x = self.ffn_with_coord(x_pe)
         x = self.norm(x.flatten(2).transpose(1, 2))
 
         return x, out_size
 
+
 from .twins import Block, CrossBlock
+
 
 class GroupVerticalSelfAttentionLayer(nn.Module):
     def __init__(self, dim, cfg, num_heads=8, attn_drop=0., proj_drop=0., drop_path=0., dropout=0.):
@@ -95,15 +100,17 @@ class GroupVerticalSelfAttentionLayer(nn.Module):
         sr_ratio = 4
         dpr = 0.
         drop_rate = dropout
-        attn_drop_rate=0.
+        attn_drop_rate = 0.
 
         self.block = Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop_rate,
-                attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=ws, with_rpe=True, vert_c_dim=cfg.vert_c_dim, groupattention=True, cfg=self.cfg)
+                           attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=ws, with_rpe=True,
+                           vert_c_dim=cfg.vert_c_dim, groupattention=True, cfg=self.cfg)
 
     def forward(self, x, size, context=None):
         x = self.block(x, size, context)
 
         return x
+
 
 class VerticalSelfAttentionLayer(nn.Module):
     def __init__(self, dim, cfg, num_heads=8, attn_drop=0., proj_drop=0., drop_path=0., dropout=0.):
@@ -120,12 +127,14 @@ class VerticalSelfAttentionLayer(nn.Module):
         sr_ratio = 4
         dpr = 0.
         drop_rate = dropout
-        attn_drop_rate=0.
+        attn_drop_rate = 0.
 
         self.local_block = Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop_rate,
-                attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=ws, with_rpe=True, vert_c_dim=cfg.vert_c_dim)
+                                 attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=ws, with_rpe=True,
+                                 vert_c_dim=cfg.vert_c_dim)
         self.global_block = Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, drop=drop_rate,
-                attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=1, with_rpe=True, vert_c_dim=cfg.vert_c_dim)
+                                  attn_drop=attn_drop_rate, drop_path=dpr, sr_ratio=sr_ratio, ws=1, with_rpe=True,
+                                  vert_c_dim=cfg.vert_c_dim)
 
     def forward(self, x, size, context=None):
         x = self.local_block(x, size, context)
@@ -136,9 +145,10 @@ class VerticalSelfAttentionLayer(nn.Module):
     def compute_params(self):
         num = 0
         for param in self.parameters():
-            num +=  np.prod(param.size())
+            num += np.prod(param.size())
 
         return num
+
 
 class SelfAttentionLayer(nn.Module):
     def __init__(self, dim, cfg, num_heads=8, attn_drop=0., proj_drop=0., drop_path=0., dropout=0.):
@@ -153,7 +163,8 @@ class SelfAttentionLayer(nn.Module):
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
         self.multi_head_attn = MultiHeadAttention(dim, num_heads)
-        self.q, self.k, self.v = nn.Linear(dim, dim, bias=True), nn.Linear(dim, dim, bias=True), nn.Linear(dim, dim, bias=True)
+        self.q, self.k, self.v = nn.Linear(dim, dim, bias=True), nn.Linear(dim, dim, bias=True), nn.Linear(dim, dim,
+                                                                                                           bias=True)
 
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -188,13 +199,14 @@ class SelfAttentionLayer(nn.Module):
     def compute_params(self):
         num = 0
         for param in self.parameters():
-            num +=  np.prod(param.size())
+            num += np.prod(param.size())
 
         return num
 
 
 class CrossAttentionLayer(nn.Module):
-    def __init__(self, qk_dim, v_dim, query_token_dim, tgt_token_dim, num_heads=8, attn_drop=0., proj_drop=0., drop_path=0., dropout=0.):
+    def __init__(self, qk_dim, v_dim, query_token_dim, tgt_token_dim, num_heads=8, attn_drop=0., proj_drop=0.,
+                 drop_path=0., dropout=0.):
         super(CrossAttentionLayer, self).__init__()
         assert qk_dim % num_heads == 0, f"dim {qk_dim} should be divided by num_heads {num_heads}."
         assert v_dim % num_heads == 0, f"dim {v_dim} should be divided by num_heads {num_heads}."
@@ -209,7 +221,9 @@ class CrossAttentionLayer(nn.Module):
         self.norm1 = nn.LayerNorm(query_token_dim)
         self.norm2 = nn.LayerNorm(query_token_dim)
         self.multi_head_attn = BroadMultiHeadAttention(qk_dim, num_heads)
-        self.q, self.k, self.v = nn.Linear(query_token_dim, qk_dim, bias=True), nn.Linear(tgt_token_dim, qk_dim, bias=True), nn.Linear(tgt_token_dim, v_dim, bias=True)
+        self.q, self.k, self.v = nn.Linear(query_token_dim, qk_dim, bias=True), nn.Linear(tgt_token_dim, qk_dim,
+                                                                                          bias=True), nn.Linear(
+            tgt_token_dim, v_dim, bias=True)
 
         self.proj = nn.Linear(v_dim, query_token_dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -246,42 +260,48 @@ class CostPerceiverEncoder(nn.Module):
         super(CostPerceiverEncoder, self).__init__()
         self.cfg = cfg
         self.patch_size = cfg.patch_size
-        self.patch_embed = PatchEmbed(in_chans=self.cfg.cost_heads_num, patch_size=self.patch_size, embed_dim=cfg.cost_latent_input_dim, pe=cfg.pe)
+        self.patch_embed = PatchEmbed(in_chans=self.cfg.cost_heads_num, patch_size=self.patch_size,
+                                      embed_dim=cfg.cost_latent_input_dim, pe=cfg.pe)
 
         self.depth = cfg.encoder_depth
 
         self.latent_tokens = nn.Parameter(torch.randn(1, cfg.cost_latent_token_num, cfg.cost_latent_dim))
 
-        query_token_dim, tgt_token_dim = cfg.cost_latent_dim, cfg.cost_latent_input_dim*2
+        query_token_dim, tgt_token_dim = cfg.cost_latent_dim, cfg.cost_latent_input_dim * 2
         qk_dim, v_dim = query_token_dim, query_token_dim
         self.input_layer = CrossAttentionLayer(qk_dim, v_dim, query_token_dim, tgt_token_dim, dropout=cfg.dropout)
 
         if cfg.use_mlp:
-            self.encoder_layers = nn.ModuleList([MLPMixerLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
+            self.encoder_layers = nn.ModuleList(
+                [MLPMixerLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
         else:
-            self.encoder_layers = nn.ModuleList([SelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
+            self.encoder_layers = nn.ModuleList(
+                [SelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
 
         if self.cfg.vertical_conv:
-            self.vertical_encoder_layers = nn.ModuleList([ConvNextLayer(cfg.cost_latent_dim) for idx in range(self.depth)])
+            self.vertical_encoder_layers = nn.ModuleList(
+                [ConvNextLayer(cfg.cost_latent_dim) for idx in range(self.depth)])
         else:
-            self.vertical_encoder_layers = nn.ModuleList([VerticalSelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in range(self.depth)])
+            self.vertical_encoder_layers = nn.ModuleList(
+                [VerticalSelfAttentionLayer(cfg.cost_latent_dim, cfg, dropout=cfg.dropout) for idx in
+                 range(self.depth)])
         self.cost_scale_aug = None
         if ('cost_scale_aug' in cfg.keys()):
             self.cost_scale_aug = cfg.cost_scale_aug
             print("[Using cost_scale_aug: {}]".format(self.cost_scale_aug))
 
-
-
     def forward(self, cost_volume, data, context=None):
         B, heads, H1, W1, H2, W2 = cost_volume.shape
-        cost_maps = cost_volume.permute(0, 2, 3, 1, 4, 5).contiguous().view(B*H1*W1, self.cfg.cost_heads_num, H2, W2)
+        cost_maps = cost_volume.permute(0, 2, 3, 1, 4, 5).contiguous().view(B * H1 * W1, self.cfg.cost_heads_num, H2,
+                                                                            W2)
         data['cost_maps'] = cost_maps
 
         if self.cost_scale_aug is not None:
-            scale_factor = torch.FloatTensor(B*H1*W1, self.cfg.cost_heads_num, H2, W2).uniform_(self.cost_scale_aug[0], self.cost_scale_aug[1]).cuda()
+            scale_factor = torch.FloatTensor(B * H1 * W1, self.cfg.cost_heads_num, H2, W2).uniform_(
+                self.cost_scale_aug[0], self.cost_scale_aug[1]).cuda()
             cost_maps = cost_maps * scale_factor
-        
-        x, size = self.patch_embed(cost_maps)   # B*H1*W1, size[0]*size[1], C
+
+        x, size = self.patch_embed(cost_maps)  # B*H1*W1, size[0]*size[1], C
         data['H3W3'] = size
         H3, W3 = size
 
@@ -293,19 +313,26 @@ class CostPerceiverEncoder(nn.Module):
             x = layer(x)
             if self.cfg.vertical_conv:
                 # B, H1*W1, K, D -> B, K, D, H1*W1 -> B*K, D, H1, W1
-                x = x.view(B, H1*W1, self.cfg.cost_latent_token_num, -1).permute(0, 3, 1, 2).reshape(B*self.cfg.cost_latent_token_num, -1, H1, W1)
+                x = x.view(B, H1 * W1, self.cfg.cost_latent_token_num, -1).permute(0, 3, 1, 2).reshape(
+                    B * self.cfg.cost_latent_token_num, -1, H1, W1)
                 x = self.vertical_encoder_layers[idx](x)
                 # B*K, D, H1, W1 -> B, K, D, H1*W1 -> B, H1*W1, K, D
-                x = x.view(B, self.cfg.cost_latent_token_num, -1, H1*W1).permute(0, 2, 3, 1).reshape(B*H1*W1, self.cfg.cost_latent_token_num, -1)
+                x = x.view(B, self.cfg.cost_latent_token_num, -1, H1 * W1).permute(0, 2, 3, 1).reshape(B * H1 * W1,
+                                                                                                       self.cfg.cost_latent_token_num,
+                                                                                                       -1)
             else:
-                x = x.view(B, H1*W1, self.cfg.cost_latent_token_num, -1).permute(0, 2, 1, 3).reshape(B*self.cfg.cost_latent_token_num, H1*W1, -1)
+                x = x.view(B, H1 * W1, self.cfg.cost_latent_token_num, -1).permute(0, 2, 1, 3).reshape(
+                    B * self.cfg.cost_latent_token_num, H1 * W1, -1)
                 x = self.vertical_encoder_layers[idx](x, (H1, W1), context)
-                x = x.view(B, self.cfg.cost_latent_token_num, H1*W1, -1).permute(0, 2, 1, 3).reshape(B*H1*W1, self.cfg.cost_latent_token_num, -1)
+                x = x.view(B, self.cfg.cost_latent_token_num, H1 * W1, -1).permute(0, 2, 1, 3).reshape(B * H1 * W1,
+                                                                                                       self.cfg.cost_latent_token_num,
+                                                                                                       -1)
 
         if self.cfg.cost_encoder_res is True:
             x = x + short_cut
-            #print("~~~~")
+            # print("~~~~")
         return x
+
 
 class MemoryEncoder(nn.Module):
     def __init__(self, cfg):
@@ -327,9 +354,9 @@ class MemoryEncoder(nn.Module):
         fmap1 = rearrange(fmap1, 'b (heads d) h w -> b heads (h w) d', heads=self.cfg.cost_heads_num)
         fmap2 = rearrange(fmap2, 'b (heads d) h w -> b heads (h w) d', heads=self.cfg.cost_heads_num)
         corr = einsum('bhid, bhjd -> bhij', fmap1, fmap2)
-        corr = corr.permute(0, 2, 1, 3).view(batch*ht*wd, self.cfg.cost_heads_num, ht, wd)
-        #corr = self.norm(self.relu(corr))
-        corr = corr.view(batch, ht*wd, self.cfg.cost_heads_num, ht*wd).permute(0, 2, 1, 3)
+        corr = corr.permute(0, 2, 1, 3).view(batch * ht * wd, self.cfg.cost_heads_num, ht, wd)
+        # corr = self.norm(self.relu(corr))
+        corr = corr.view(batch, ht * wd, self.cfg.cost_heads_num, ht * wd).permute(0, 2, 1, 3)
         corr = corr.view(batch, self.cfg.cost_heads_num, ht, wd, ht, wd)
 
         return corr

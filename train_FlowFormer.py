@@ -55,6 +55,7 @@ def count_parameters(model):
 
 def train(cfg):
     model = nn.DataParallel(build_flowformer(cfg))
+    # model = build_flowformer(cfg)
     loguru_logger.info("Parameter Count: %d" % count_parameters(model))
 
     if cfg.restore_ckpt is not None:
