@@ -14,14 +14,14 @@ from configs.things_eval import get_cfg as get_things_cfg
 from configs.small_things_eval import get_cfg as get_small_things_cfg
 from core.utils.misc import process_cfg
 import datasets
-from utils import flow_viz
-from utils import frame_utils
+from core.utils import flow_viz
+from core.utils import frame_utils
 
 # from FlowFormer import FlowFormer
 from core.FlowFormer import build_flowformer
-from raft import RAFT
+from core.raft import RAFT
 
-from utils.utils import InputPadder, forward_interpolate
+from core.utils.utils import InputPadder, forward_interpolate
 
 @torch.no_grad()
 def validate_chairs(model):
